@@ -43,7 +43,12 @@ testloader = DataLoader(testset, batch_size=BATCH_SIZE, shuffle=False, num_worke
 # --- 3. MODEL INITIALIZATION ---
 # Using the SqueezeNetCIFAR class defined in the previous step
 # Ensure you include the class definition from the previous response here
+import os
 model = SqueezeNetCIFAR(num_classes=10).to(device)
+checkpoint_path = "squeezenet.pth"
+if os.path.exists(checkpoint_path):
+    print(f"Loading checkpoint from {checkpoint_path}...")
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 
 # --- 4. OPTIMIZER & SCHEDULER ---
 criterion = nn.CrossEntropyLoss()
