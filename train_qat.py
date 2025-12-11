@@ -12,7 +12,7 @@ from model_qat import SqueezeNetQAT
 
 # --- CONFIGURATION ---
 TASK1_CHECKPOINT = "squeezenet_cifar10.pth" 
-QAT_EPOCHS = 10         
+QAT_EPOCHS = 4         
 LR = 1e-5               # FIX 1: Very low learning rate to prevent explosion
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
