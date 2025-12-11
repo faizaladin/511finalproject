@@ -45,6 +45,7 @@ testloader = DataLoader(testset, batch_size=BATCH_SIZE, shuffle=False, num_worke
 # Using the SqueezeNetCIFAR class defined in the previous step
 # Ensure you include the class definition from the previous response here
 import os
+import wandb
 model = SqueezeNetCIFAR(num_classes=10).to(device)
 checkpoint_path = "squeezenet.pth"
 if os.path.exists(checkpoint_path):
@@ -57,6 +58,13 @@ optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # --- 5. TRAINING LOOP ---
 def train():
+    # Initialize wandb
+    wandb.init(project="squeezenet-cifar10", config={
+        "batch_size": BATCH_SIZE,
+        "epochs": NUM_EPOCHS,
+        "learning_rate": LEARNING_RATE
+    })
+
     # Verify image size from first batch
     sample_inputs, _ = next(iter(trainloader))
     print(f"Sample batch image size: {sample_inputs.shape}")
@@ -92,12 +100,20 @@ def train():
               f"Acc: {epoch_acc:.2f}%")
 
         # Validate every epoch (after epoch)
-        validate()
+        val_acc = validate(return_acc=True)
+
+        # Log metrics to wandb
+        wandb.log({
+            "train_loss": epoch_loss,
+            "train_acc": epoch_acc,
+            "val_acc": val_acc,
+            "epoch": epoch + 1
+        })
 
         # Save model every epoch (after epoch)
         torch.save(model.state_dict(), f"squeezenet.pth")
 
-def validate():
+def validate(return_acc=False):
     model.eval()
     correct = 0
     total = 0
@@ -111,6 +127,8 @@ def validate():
 
     acc = 100 * correct / total
     print(f"--> Validation Accuracy: {acc:.2f}%")
+    if return_acc:
+        return acc
 
 # --- 6. EXECUTE ---
 if __name__ == "__main__":
