@@ -3,8 +3,8 @@ import torch.nn as nn
 from quantization_utils import QuantizedConv2d, FixedPointQuantizeFunction
 
 # --- CONFIGURATION ---
-W_FRAC = 7  # Q2.6 for Weights
-A_FRAC = 1  # Q4.4 for Activations
+W_FRAC = 6  # Q2.6 for Weights
+A_FRAC = 2  # Q4.4 for Activations
 
 # --- HELPER CLASS ---
 class QuantReLU(nn.Module):
