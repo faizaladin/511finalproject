@@ -1,45 +1,37 @@
 import torch
 import torch.nn as nn
-# ADD: Import the quantization function/class from your utils
-# Check your file, it might be called 'quantize' or 'QuantAct'
-from quantization_utils import QuantizedConv2d, quantize 
+from quantization_utils import QuantizedConv2d
 
-# --- CONFIGURATION ---
-W_FRAC = 7
-A_FRAC = 1
+# --- CONFIGURATION TO REPORT ---
+W_FRAC = 7  # Q2.6 for Weights
+A_FRAC = 1  # Q4.4 for Activations
 
 class FireQAT(nn.Module):
     def __init__(self, in_channels, squeeze_planes, expand1x1_planes, expand3x3_planes):
         super(FireQAT, self).__init__()
         
+        # Squeeze
         self.squeeze = QuantizedConv2d(in_channels, squeeze_planes, kernel_size=1, 
                                        weight_frac_bits=W_FRAC, input_frac_bits=A_FRAC)
         self.relu1 = nn.ReLU(inplace=True)
         
+        # Expand 1x1
         self.expand1x1 = QuantizedConv2d(squeeze_planes, expand1x1_planes, kernel_size=1,
                                          weight_frac_bits=W_FRAC, input_frac_bits=A_FRAC)
         self.relu2 = nn.ReLU(inplace=True)
         
+        # Expand 3x3
         self.expand3x3 = QuantizedConv2d(squeeze_planes, expand3x3_planes, kernel_size=3, padding=1,
                                          weight_frac_bits=W_FRAC, input_frac_bits=A_FRAC)
         self.relu3 = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # 1. Squeeze
-        x = self.squeeze(x)
-        x = self.relu1(x)
-        
-        # --- FIX STARTS HERE ---
-        # Explicitly quantize the Squeeze Output before it waits for the next layer
-        # This closes the "Float Gap" so Verification 2 sees quantized data
-        x = quantize(x, num_bits=A_FRAC)  # Ensure this matches your util's arguments
-        # --- FIX ENDS HERE ---
-
-        # 2. Expand
+        x = self.relu1(self.squeeze(x))
         return torch.cat([
             self.relu2(self.expand1x1(x)),
             self.relu3(self.expand3x3(x))
         ], 1)
+
 class SqueezeNetQAT(nn.Module):
     def __init__(self, num_classes=10):
         super(SqueezeNetQAT, self).__init__()
