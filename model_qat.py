@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from quantization_utils import QuantizedConv2d
+# [FIX 1] Import FixedPointQuantizeFunction
+from quantization_utils import QuantizedConv2d, FixedPointQuantizeFunction
 
 # --- CONFIGURATION TO REPORT ---
 W_FRAC = 7  # Q2.6 for Weights
@@ -26,17 +27,30 @@ class FireQAT(nn.Module):
         self.relu3 = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        x = self.relu1(self.squeeze(x))
-        return torch.cat([
-            self.relu2(self.expand1x1(x)),
-            self.relu3(self.expand3x3(x))
-        ], 1)
+        # 1. Squeeze Path
+        x = self.squeeze(x)
+        x = self.relu1(x)
+        
+        # [FIX 2] Explicitly quantize here!
+        # This converts the Float output of ReLU into the Discrete steps your test expects.
+        x = FixedPointQuantizeFunction.apply(x, 8, A_FRAC)
+
+        # 2. Expand Paths
+        # We also quantize these outputs to be consistent
+        out1x1 = self.expand1x1(x)
+        out1x1 = self.relu2(out1x1)
+        out1x1 = FixedPointQuantizeFunction.apply(out1x1, 8, A_FRAC)
+
+        out3x3 = self.expand3x3(x)
+        out3x3 = self.relu3(out3x3)
+        out3x3 = FixedPointQuantizeFunction.apply(out3x3, 8, A_FRAC)
+
+        return torch.cat([out1x1, out3x3], 1)
 
 class SqueezeNetQAT(nn.Module):
     def __init__(self, num_classes=10):
         super(SqueezeNetQAT, self).__init__()
         
-        # Exact same structure as Task 1, just swapping Conv2d -> QuantizedConv2d
         self.features = nn.Sequential(
             QuantizedConv2d(3, 96, kernel_size=7, stride=2, padding=3, 
                             weight_frac_bits=W_FRAC, input_frac_bits=A_FRAC),
