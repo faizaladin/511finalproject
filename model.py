@@ -25,12 +25,8 @@ class SqueezeNetCIFAR(nn.Module):
         self.num_classes = num_classes
 
         self.features = nn.Sequential(
-            # --- MODIFIED FOR CIFAR-10 (32x32 Input) ---
-            # Original was: Conv2d(3, 96, kernel=7, stride=2) -> MaxPool
-            # We use Kernel=3, Stride=1, Padding=1 to preserve dimensions
             nn.Conv2d(3, 96, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            # Note: We removed the first MaxPool2d here to keep the feature map size larger
             
             # fire2
             Fire(96, 16, 64, 64),
@@ -77,7 +73,7 @@ class SqueezeNetCIFAR(nn.Module):
 model = SqueezeNetCIFAR(num_classes=10)
 
 # Verify input/output shape
-dummy_input = torch.randn(1, 3, 32, 32) # Standard CIFAR batch size
+dummy_input = torch.randn(1, 3, 32, 32)
 output = model(dummy_input)
 print(f"Input shape: {dummy_input.shape}")
-print(f"Output shape: {output.shape}") # Should be [1, 10]
+print(f"Output shape: {output.shape}")
