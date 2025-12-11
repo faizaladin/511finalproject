@@ -5,19 +5,23 @@ from torch.utils.data import DataLoader
 import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
+import os
 
+# Ensure quantization_utils.py is in the same folder
 from model_qat import SqueezeNetQAT
 
-# --- SETTINGS ---
-TASK1_CHECKPOINT = "squeezenet_cifar10.pth" # Your file from Task 1
-QAT_EPOCHS = 10         # Needs fewer epochs than fresh training
-LR = 0.001              # Lower Learning Rate for fine-tuning
+# --- CONFIGURATION ---
+TASK1_CHECKPOINT = "squeezenet_cifar10.pth" 
+QAT_EPOCHS = 10         
+LR = 0.0005             # Very low learning rate for fine-tuning
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Running QAT on: {device}")
 
 # --- DATA ---
-# Use same transforms as Task 1
+# Use the exact same normalization as Task 1
 stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+
 train_transform = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomCrop(224, padding=4),
@@ -25,6 +29,7 @@ train_transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(*stats)
 ])
+
 test_transform = transforms.Compose([
     transforms.Resize(224),
     transforms.ToTensor(),
@@ -32,46 +37,89 @@ test_transform = transforms.Compose([
 ])
 
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=train_transform)
-trainloader = DataLoader(trainset, batch_size=64, shuffle=True)
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
-testloader = DataLoader(testset, batch_size=64, shuffle=False)
+trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2)
 
-# --- LOAD MODEL ---
-print("Initializing QAT Model...")
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
+testloader = DataLoader(testset, batch_size=64, shuffle=False, num_workers=2)
+
+# --- MODEL SETUP ---
 model = SqueezeNetQAT(num_classes=10).to(device)
 
+# --- STRICT LOADING (THE FIX) ---
 print(f"Loading weights from {TASK1_CHECKPOINT}...")
-# We can load the float weights directly because the parameter names match exactly
+
+if not os.path.exists(TASK1_CHECKPOINT):
+    raise FileNotFoundError(f"Could not find {TASK1_CHECKPOINT}. Please check the file name.")
+
 state_dict = torch.load(TASK1_CHECKPOINT, map_location=device)
-model.load_state_dict(state_dict, strict=False)
+
+# Handle 'module.' prefix if it exists (from DataParallel training)
+new_state_dict = {}
+for k, v in state_dict.items():
+    name = k.replace("module.", "") 
+    new_state_dict[name] = v
+
+# Load strictly - this will crash if there is a mismatch, preventing 10% acc loops
+try:
+    model.load_state_dict(new_state_dict, strict=True)
+    print("SUCCESS: Weights loaded successfully.")
+except RuntimeError as e:
+    print("\nERROR: Model architecture mismatch. See details below:")
+    print(e)
+    exit(1)
+
+# --- PRE-TRAINING CHECK ---
+print("Running 'Epoch 0' verification to ensure model is not random...")
+model.eval()
+correct = 0
+total = 0
+with torch.no_grad():
+    # Check just the first 10 batches to save time
+    for i, (inputs, labels) in enumerate(testloader):
+        if i > 10: break 
+        inputs, labels = inputs.to(device), labels.to(device)
+        outputs = model(inputs)
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+
+initial_acc = 100. * correct / total
+print(f"Initial Accuracy (Quantized, Pre-tuning): {initial_acc:.2f}%")
+
+if initial_acc < 20.0:
+    print("\n[STOPPING] The model accuracy is too low (~10%). Weights are not loading correctly.")
+    exit(1)
+else:
+    print("Model verified! Starting QAT fine-tuning...")
 
 # --- OPTIMIZER ---
 optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-4)
 criterion = nn.CrossEntropyLoss()
 
-# --- QAT LOOP ---
-print("Starting Quantization-Aware Training...")
+# --- TRAINING LOOP ---
 for epoch in range(QAT_EPOCHS):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
     
-    for inputs, labels in tqdm(trainloader, desc=f"Epoch {epoch+1}/{QAT_EPOCHS}"):
+    loop = tqdm(trainloader, desc=f"QAT Epoch {epoch+1}/{QAT_EPOCHS}")
+    
+    for inputs, labels in loop:
         inputs, labels = inputs.to(device), labels.to(device)
         
         optimizer.zero_grad()
-        outputs = model(inputs) # This uses QuantizedConv2d
+        outputs = model(inputs) 
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        
+
         running_loss += loss.item()
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
         
-    print(f"Epoch {epoch+1} Train Acc: {100.*correct/total:.2f}%")
+        loop.set_postfix(loss=loss.item(), acc=100.*correct/total)
 
     # Validation
     model.eval()
@@ -84,9 +132,10 @@ for epoch in range(QAT_EPOCHS):
             _, predicted = outputs.max(1)
             val_total += labels.size(0)
             val_correct += predicted.eq(labels).sum().item()
-            
-    print(f"Epoch {epoch+1} Val Acc: {100.*val_correct/val_total:.2f}%")
 
-# Save the final quantized model
-torch.save(model.state_dict(), "squeezenet_qat_8bit.pth")
-print("Saved QAT model to squeezenet_qat_8bit.pth")
+    print(f"Epoch {epoch+1} Val Acc: {100.*val_correct/val_total:.2f}%")
+    
+    # Save checkpoint
+    torch.save(model.state_dict(), "squeezenet_qat_8bit.pth")
+
+print("QAT Finished. Saved to squeezenet_qat_8bit.pth")
