@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from model import SqueezeNetCIFAR 
 
 # --- 1. CONFIGURATION & HYPERPARAMETERS ---
-BATCH_SIZE = 256     # Typical for CIFAR-10
+BATCH_SIZE = 64     # Typical for CIFAR-10
 NUM_EPOCHS = 50        # Sufficient for convergence on CIFAR
 LEARNING_RATE = 1e-4   # Adam optimizer starting learning rate
 
@@ -22,7 +22,6 @@ stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 train_transform = transforms.Compose([
     transforms.Resize(224),
-    transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(*stats)
