@@ -3,25 +3,34 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
-from tqdm import tqdm
 from torch.utils.data import DataLoader
-from model import SqueezeNetCIFAR 
+from tqdm import tqdm
+import os
+import wandb
 
-# --- 1. CONFIGURATION & HYPERPARAMETERS ---
-BATCH_SIZE = 64     # Typical for CIFAR-10
-NUM_EPOCHS = 50        # Sufficient for convergence on CIFAR
-LEARNING_RATE = 1e-4   # Adam optimizer starting learning rate
+# Import the model from your model.py file
+# Ensure your model.py class is named 'SqueezeNet'
+from model import SqueezeNet 
 
-# Check for GPU
+# --- CONFIGURATION (PAPER SETTINGS) ---
+BATCH_SIZE = 64             # Standard for this era
+NUM_EPOCHS = 100             # SqueezeNet converges relatively fast
+LEARNING_RATE = 0.04        # Paper: "begin with a learning rate of 0.04"
+MOMENTUM = 0.9              # Standard SGD momentum
+WEIGHT_DECAY = 5e-4         # Standard AlexNet-era regularization
+
+# Device configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Training on: {device}")
+print(f"Training on device: {device}")
 
-# --- 2. DATA PREPARATION (CIFAR-10) ---
-# Standard normalization for CIFAR-10
+# --- DATA PREPARATION ---
+# SqueezeNet was designed for ImageNet (224x224). 
+# We MUST resize CIFAR-10 (32x32) to 224x224 for the strides to work correctly.
 stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 train_transform = transforms.Compose([
     transforms.Resize(224),
+    transforms.RandomCrop(224, padding=4), # Standard Augmentation
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(*stats)
@@ -33,103 +42,108 @@ test_transform = transforms.Compose([
     transforms.Normalize(*stats)
 ])
 
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                        download=True, transform=train_transform)
+# Download and load CIFAR-10
+print("Preparing Data...")
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=train_transform)
 trainloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                       download=True, transform=test_transform)
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
 testloader = DataLoader(testset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
 
-# --- 3. MODEL INITIALIZATION ---
-# Using the SqueezeNetCIFAR class defined in the previous step
-# Ensure you include the class definition from the previous response here
-import os
-import wandb
-model = SqueezeNetCIFAR(num_classes=10).to(device)
-checkpoint_path = "squeezenet.pth"
-if os.path.exists(checkpoint_path):
-    print(f"Loading checkpoint from {checkpoint_path}...")
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+# --- MODEL INITIALIZATION ---
+# Initialize model with 10 classes for CIFAR (Paper used 1000 for ImageNet)
+model = SqueezeNet(num_classes=10).to(device)
 
-# --- 4. OPTIMIZER & SCHEDULER ---
+# --- OPTIMIZER & SCHEDULER ---
+# Paper: "Solver: SGD", "Learning Rate: 0.04"
+optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
+
+# Paper: "Linearly decrease the learning rate throughout training"
+# This scheduler starts at LR and reduces it linearly to 0 by the end of training.
+scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.001, total_iters=NUM_EPOCHS)
+
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-# --- 5. TRAINING LOOP ---
-def train():
-    # Initialize wandb
-    wandb.init(project="squeezenet-cifar10", config={
-        "batch_size": BATCH_SIZE,
-        "epochs": NUM_EPOCHS,
-        "learning_rate": LEARNING_RATE
-    })
+# --- TRAINING LOOP ---
+wandb.init(project="squeezenet-cifar10", config={
+    "batch_size": BATCH_SIZE,
+    "epochs": NUM_EPOCHS,
+    "learning_rate": LEARNING_RATE,
+    "momentum": MOMENTUM,
+    "weight_decay": WEIGHT_DECAY,
+    "optimizer": "SGD",
+    "lr_schedule": "linear"
+})
+print(f"Starting training for {NUM_EPOCHS} epochs...")
+print(f"Initial LR: {LEARNING_RATE}")
 
-    # Verify image size from first batch
-    sample_inputs, _ = next(iter(trainloader))
-    print(f"Sample batch image size: {sample_inputs.shape}")
-
-    for epoch in range(NUM_EPOCHS):
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
-        
-        for i, (inputs, labels) in enumerate(tqdm(trainloader, desc=f"Epoch {epoch+1} Training")):
-            inputs, labels = inputs.to(device), labels.to(device)
-
-            optimizer.zero_grad()
-
-            # Forward + Backward + Optimize
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            # Statistics
-            running_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-
-        # Calculate Epoch Metrics after epoch
-        epoch_loss = running_loss / len(trainloader)
-        epoch_acc = 100. * correct / total
-        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}] "
-              f"Loss: {epoch_loss:.4f} | "
-              f"Acc: {epoch_acc:.2f}%")
-
-        # Validate every epoch (after epoch)
-        val_acc = validate(return_acc=True)
-
-        # Log metrics to wandb
-        wandb.log({
-            "train_loss": epoch_loss,
-            "train_acc": epoch_acc,
-            "val_acc": val_acc,
-            "epoch": epoch + 1
-        })
-
-        # Save model every epoch (after epoch)
-        torch.save(model.state_dict(), f"squeezenet.pth")
-
-def validate(return_acc=False):
-    model.eval()
+for epoch in range(NUM_EPOCHS):
+    model.train()
+    running_loss = 0.0
     correct = 0
     total = 0
+    
+    # Progress bar for training
+    loop = tqdm(trainloader, desc=f"Epoch [{epoch+1}/{NUM_EPOCHS}]", leave=True)
+    
+    for inputs, labels in loop:
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        # Zero the parameter gradients
+        optimizer.zero_grad()
+
+        # Forward + Backward + Optimize
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        # Stats
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+        
+        # Update progress bar
+        loop.set_postfix(loss=loss.item(), acc=100.*correct/total)
+
+    # Calculate average loss and accuracy for the epoch
+    epoch_loss = running_loss / len(trainloader)
+    epoch_acc = 100. * correct / total
+
+    # Step the Learning Rate Scheduler
+    current_lr = optimizer.param_groups[0]['lr']
+    scheduler.step()
+
+    # --- VALIDATION ---
+    model.eval()
+    val_correct = 0
+    val_total = 0
     with torch.no_grad():
-        for inputs, labels in tqdm(testloader, desc="Evaluating"):
+        for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+            _, predicted = outputs.max(1)
+            val_total += labels.size(0)
+            val_correct += predicted.eq(labels).sum().item()
 
-    acc = 100 * correct / total
-    print(f"--> Validation Accuracy: {acc:.2f}%")
-    if return_acc:
-        return acc
+    val_acc = 100. * val_correct / val_total
 
-# --- 6. EXECUTE ---
-if __name__ == "__main__":
-    train()
+    # Log metrics to wandb
+    wandb.log({
+        "train_loss": epoch_loss,
+        "train_acc": epoch_acc,
+        "val_acc": val_acc,
+        "lr": current_lr,
+        "epoch": epoch + 1
+    })
+
+    print(f"Epoch {epoch+1} Summary:")
+    print(f"  Train Loss: {epoch_loss:.4f} | Train Acc: {epoch_acc:.2f}%")
+    print(f"  Val Acc:    {val_acc:.2f}%")
+    print(f"  Next LR:    {optimizer.param_groups[0]['lr']:.5f}")
+
+    # Save checkpoint every epoch (overwriting to save space)
+    torch.save(model.state_dict(), "squeezenet_cifar10.pth")
+
+print("Training Finished. Model saved to squeezenet_cifar10.pth")
