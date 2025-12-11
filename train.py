@@ -65,6 +65,8 @@ scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=
 criterion = nn.CrossEntropyLoss()
 
 # --- TRAINING LOOP ---
+sample_inputs, _ = next(iter(trainloader))
+print(f"Sample batch image size: {sample_inputs.shape}")
 wandb.init(project="squeezenet-cifar10", config={
     "batch_size": BATCH_SIZE,
     "epochs": NUM_EPOCHS,

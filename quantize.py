@@ -2,7 +2,7 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 import os
-from model import SqueezeNetCIFAR
+from model import SqueezeNet
 import time
 import warnings
 from tqdm import tqdm
@@ -13,18 +13,19 @@ torch.backends.quantized.engine = 'x86'
 print(f"Quantization engine: {torch.backends.quantized.engine}")
 
 # Config
-BATCH_SIZE = 128
+BATCH_SIZE = 32
 device = torch.device('cpu')
 
 def get_dataloaders():
     print("Preparing Data...")
     transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
+        transforms.Resize(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
     transform_test = transforms.Compose([
+        transforms.Resize(224),
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
@@ -81,8 +82,8 @@ def main():
     print("\n" + "="*40)
     print("1. Evaluating Baseline FP32 Model")
     print("="*40)
-    model_fp32 = SqueezeNetCIFAR(num_classes=10)
-    model_fp32 = load_checkpoint(model_fp32, 'squeezenet.pth')
+    model_fp32 = SqueezeNet(num_classes=10)
+    model_fp32 = load_checkpoint(model_fp32, 'squeezenet_cifar10.pth')
     acc_fp32, time_fp32 = evaluate_model(model_fp32, testloader, device_to_run=torch.device('cpu'))
     size_fp32 = get_model_size_mb(model_fp32)
     print("-" * 40)
@@ -104,8 +105,8 @@ def main():
     example_input = example_input.cpu()
     # Calibration: run a few batches through the model
     # Train FP32 model for 3 epochs with 8-bit clipping
-    model_qat = SqueezeNetCIFAR(num_classes=10).train()
-    model_qat = load_checkpoint(model_qat, 'squeezenet.pth')
+    model_qat = SqueezeNet(num_classes=10).train()
+    model_qat = load_checkpoint(model_qat, 'squeezenet_cifar10.pth')
     model_qat = model_qat.to('cuda')
     optimizer = torch.optim.Adam(model_qat.parameters(), lr=1e-4)
     loss_fn = torch.nn.CrossEntropyLoss()
