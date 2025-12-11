@@ -3,8 +3,8 @@ import torch.nn as nn
 from quantization_utils import QuantizedConv2d
 
 # --- CONFIGURATION TO REPORT ---
-W_FRAC = 8  # Q2.6 for Weights
-A_FRAC = 0  # Q4.4 for Activations
+W_FRAC = 7  # Q2.6 for Weights
+A_FRAC = 1  # Q4.4 for Activations
 
 class FireQAT(nn.Module):
     def __init__(self, in_channels, squeeze_planes, expand1x1_planes, expand3x3_planes):
