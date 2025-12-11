@@ -58,6 +58,10 @@ optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # --- 5. TRAINING LOOP ---
 def train():
+    # Verify image size from first batch
+    sample_inputs, _ = next(iter(trainloader))
+    print(f"Sample batch image size: {sample_inputs.shape}")
+
     for epoch in range(NUM_EPOCHS):
         model.train()
         running_loss = 0.0
