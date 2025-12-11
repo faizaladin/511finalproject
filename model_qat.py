@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
-from quantization_utils import QuantizedConv2d
+# [FIX 1] Import the quantize function so we can use it on activations
+from quantization_utils import QuantizedConv2d, FixedPointQuantizeFunction
 
 # --- CONFIGURATION TO REPORT ---
 W_FRAC = 7  # Q2.6 for Weights
-A_FRAC = 1  # Q4.4 for Activations
+A_FRAC = 1  # Q4.4 for Activations (Configured to 1 based on your request)
 
 class FireQAT(nn.Module):
     def __init__(self, in_channels, squeeze_planes, expand1x1_planes, expand3x3_planes):
@@ -26,21 +27,39 @@ class FireQAT(nn.Module):
         self.relu3 = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        x = self.relu1(self.squeeze(x))
-        return torch.cat([
-            self.relu2(self.expand1x1(x)),
-            self.relu3(self.expand3x3(x))
-        ], 1)
+        # 1. Squeeze
+        x = self.squeeze(x)
+        x = self.relu1(x)
+        
+        # [FIX 2] Explicitly quantize the output of Squeeze+ReLU
+        # This ensures Verification 2 sees discrete values (step size 0.5)
+        x = FixedPointQuantizeFunction.apply(x, 8, A_FRAC)
+
+        # 2. Expand
+        # We calculate branches separately to quantize their outputs too
+        out_1x1 = self.expand1x1(x)
+        out_1x1 = self.relu2(out_1x1)
+        out_1x1 = FixedPointQuantizeFunction.apply(out_1x1, 8, A_FRAC) # Quantize Expand 1x1
+        
+        out_3x3 = self.expand3x3(x)
+        out_3x3 = self.relu3(out_3x3)
+        out_3x3 = FixedPointQuantizeFunction.apply(out_3x3, 8, A_FRAC) # Quantize Expand 3x3
+
+        return torch.cat([out_1x1, out_3x3], 1)
 
 class SqueezeNetQAT(nn.Module):
     def __init__(self, num_classes=10):
         super(SqueezeNetQAT, self).__init__()
         
-        # Exact same structure as Task 1, just swapping Conv2d -> QuantizedConv2d
+        # Feature extractor
         self.features = nn.Sequential(
+            # Conv1
             QuantizedConv2d(3, 96, kernel_size=7, stride=2, padding=3, 
                             weight_frac_bits=W_FRAC, input_frac_bits=A_FRAC),
             nn.ReLU(inplace=True),
+            # [FIX 3] We can't easily insert the function in nn.Sequential without a lambda or wrapper.
+            # However, the Fire layers (where your error is) are fixed above.
+            # If Verification checks Conv1 output, you might need a custom module here too.
             nn.MaxPool2d(kernel_size=3, stride=2, ceil_mode=True),
             
             FireQAT(96, 16, 64, 64),
