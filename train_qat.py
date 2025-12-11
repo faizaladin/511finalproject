@@ -13,13 +13,12 @@ from model_qat import SqueezeNetQAT
 # --- CONFIGURATION ---
 TASK1_CHECKPOINT = "squeezenet_cifar10.pth" 
 QAT_EPOCHS = 10         
-LR = 0.0005             # Very low learning rate for fine-tuning
+LR = 1e-5               # FIX 1: Very low learning rate to prevent explosion
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Running QAT on: {device}")
 
 # --- DATA ---
-# Use the exact same normalization as Task 1
 stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 train_transform = transforms.Compose([
@@ -45,36 +44,28 @@ testloader = DataLoader(testset, batch_size=64, shuffle=False, num_workers=2)
 # --- MODEL SETUP ---
 model = SqueezeNetQAT(num_classes=10).to(device)
 
-# --- STRICT LOADING (THE FIX) ---
+# --- STRICT LOADING ---
 print(f"Loading weights from {TASK1_CHECKPOINT}...")
-
 if not os.path.exists(TASK1_CHECKPOINT):
     raise FileNotFoundError(f"Could not find {TASK1_CHECKPOINT}. Please check the file name.")
 
 state_dict = torch.load(TASK1_CHECKPOINT, map_location=device)
+new_state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
 
-# Handle 'module.' prefix if it exists (from DataParallel training)
-new_state_dict = {}
-for k, v in state_dict.items():
-    name = k.replace("module.", "") 
-    new_state_dict[name] = v
-
-# Load strictly - this will crash if there is a mismatch, preventing 10% acc loops
 try:
     model.load_state_dict(new_state_dict, strict=True)
     print("SUCCESS: Weights loaded successfully.")
 except RuntimeError as e:
-    print("\nERROR: Model architecture mismatch. See details below:")
+    print("\nERROR: Model architecture mismatch.")
     print(e)
     exit(1)
 
 # --- PRE-TRAINING CHECK ---
-print("Running 'Epoch 0' verification to ensure model is not random...")
+print("Running 'Epoch 0' verification...")
 model.eval()
 correct = 0
 total = 0
 with torch.no_grad():
-    # Check just the first 10 batches to save time
     for i, (inputs, labels) in enumerate(testloader):
         if i > 10: break 
         inputs, labels = inputs.to(device), labels.to(device)
@@ -93,7 +84,8 @@ else:
     print("Model verified! Starting QAT fine-tuning...")
 
 # --- OPTIMIZER ---
-optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-4)
+# FIX 2: Set weight_decay=0. We don't want to shrink weights that need to be large for quantization.
+optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=0)
 criterion = nn.CrossEntropyLoss()
 
 # --- TRAINING LOOP ---
@@ -111,7 +103,18 @@ for epoch in range(QAT_EPOCHS):
         optimizer.zero_grad()
         outputs = model(inputs) 
         loss = criterion(outputs, labels)
+        
+        # FIX 3: Check for explosion before it breaks the model
+        if torch.isnan(loss):
+            print("ERROR: Loss is NaN! Gradients exploded.")
+            break
+            
         loss.backward()
+        
+        # FIX 4: Gradient Clipping (The Magic Fix)
+        # This limits the update size even if the error is huge (127 vs 953)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
 
         running_loss += loss.item()
@@ -135,7 +138,6 @@ for epoch in range(QAT_EPOCHS):
 
     print(f"Epoch {epoch+1} Val Acc: {100.*val_correct/val_total:.2f}%")
     
-    # Save checkpoint
     torch.save(model.state_dict(), "squeezenet_qat_8bit.pth")
 
 print("QAT Finished. Saved to squeezenet_qat_8bit.pth")
