@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-# [FIX 1] Import FixedPointQuantizeFunction
 from quantization_utils import QuantizedConv2d, FixedPointQuantizeFunction
 
-# --- CONFIGURATION TO REPORT ---
-W_FRAC = 7  # Q2.6 for Weights
-A_FRAC = 1  # Q4.4 for Activations
+# Bit Config
+W_FRAC = 7
+A_FRAC = 1 
 
 class FireQAT(nn.Module):
     def __init__(self, in_channels, squeeze_planes, expand1x1_planes, expand3x3_planes):
@@ -27,16 +26,10 @@ class FireQAT(nn.Module):
         self.relu3 = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # 1. Squeeze Path
         x = self.squeeze(x)
         x = self.relu1(x)
-        
-        # [FIX 2] Explicitly quantize here!
-        # This converts the Float output of ReLU into the Discrete steps your test expects.
         x = FixedPointQuantizeFunction.apply(x, 8, A_FRAC)
 
-        # 2. Expand Paths
-        # We also quantize these outputs to be consistent
         out1x1 = self.expand1x1(x)
         out1x1 = self.relu2(out1x1)
         out1x1 = FixedPointQuantizeFunction.apply(out1x1, 8, A_FRAC)

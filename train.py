@@ -7,30 +7,23 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
 import wandb
-
-# Import the model from your model.py file
-# Ensure your model.py class is named 'SqueezeNet'
 from model import SqueezeNet 
 
-# --- CONFIGURATION (PAPER SETTINGS) ---
-BATCH_SIZE = 64             # Standard for this era
-NUM_EPOCHS = 100             # SqueezeNet converges relatively fast
-LEARNING_RATE = 0.04        # Paper: "begin with a learning rate of 0.04"
-MOMENTUM = 0.9              # Standard SGD momentum
-WEIGHT_DECAY = 5e-4         # Standard AlexNet-era regularization
-
-# Device configuration
+# Config
+BATCH_SIZE = 64     
+NUM_EPOCHS = 100          
+LEARNING_RATE = 0.04       
+MOMENTUM = 0.9            
+WEIGHT_DECAY = 5e-4         
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Training on device: {device}")
 
-# --- DATA PREPARATION ---
-# SqueezeNet was designed for ImageNet (224x224). 
-# We MUST resize CIFAR-10 (32x32) to 224x224 for the strides to work correctly.
+# Image Resizing
 stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 train_transform = transforms.Compose([
     transforms.Resize(224),
-    transforms.RandomCrop(224, padding=4), # Standard Augmentation
+    transforms.RandomCrop(224, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(*stats)
@@ -42,7 +35,7 @@ test_transform = transforms.Compose([
     transforms.Normalize(*stats)
 ])
 
-# Download and load CIFAR-10
+# Cifar10
 print("Preparing Data...")
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=train_transform)
 trainloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
@@ -50,21 +43,15 @@ trainloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_work
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
 testloader = DataLoader(testset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
 
-# --- MODEL INITIALIZATION ---
-# Initialize model with 10 classes for CIFAR (Paper used 1000 for ImageNet)
+# Model Init
 model = SqueezeNet(num_classes=10).to(device)
 
-# --- OPTIMIZER & SCHEDULER ---
-# Paper: "Solver: SGD", "Learning Rate: 0.04"
+# Train Config
 optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
-
-# Paper: "Linearly decrease the learning rate throughout training"
-# This scheduler starts at LR and reduces it linearly to 0 by the end of training.
 scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.001, total_iters=NUM_EPOCHS)
-
 criterion = nn.CrossEntropyLoss()
 
-# --- TRAINING LOOP ---
+# Train
 sample_inputs, _ = next(iter(trainloader))
 print(f"Sample batch image size: {sample_inputs.shape}")
 wandb.init(project="squeezenet-cifar10", config={
@@ -85,39 +72,33 @@ for epoch in range(NUM_EPOCHS):
     correct = 0
     total = 0
     
-    # Progress bar for training
     loop = tqdm(trainloader, desc=f"Epoch [{epoch+1}/{NUM_EPOCHS}]", leave=True)
     
     for inputs, labels in loop:
         inputs, labels = inputs.to(device), labels.to(device)
 
-        # Zero the parameter gradients
         optimizer.zero_grad()
 
-        # Forward + Backward + Optimize
         outputs = model(inputs)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
-        # Stats
         running_loss += loss.item()
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
         
-        # Update progress bar
         loop.set_postfix(loss=loss.item(), acc=100.*correct/total)
 
-    # Calculate average loss and accuracy for the epoch
+    # Accuracy
     epoch_loss = running_loss / len(trainloader)
     epoch_acc = 100. * correct / total
 
-    # Step the Learning Rate Scheduler
     current_lr = optimizer.param_groups[0]['lr']
     scheduler.step()
 
-    # --- VALIDATION ---
+    # Eval
     model.eval()
     val_correct = 0
     val_total = 0
@@ -131,7 +112,6 @@ for epoch in range(NUM_EPOCHS):
 
     val_acc = 100. * val_correct / val_total
 
-    # Log metrics to wandb
     wandb.log({
         "train_loss": epoch_loss,
         "train_acc": epoch_acc,
@@ -145,7 +125,7 @@ for epoch in range(NUM_EPOCHS):
     print(f"  Val Acc:    {val_acc:.2f}%")
     print(f"  Next LR:    {optimizer.param_groups[0]['lr']:.5f}")
 
-    # Save checkpoint every epoch (overwriting to save space)
+    # Save checkpoint 
     torch.save(model.state_dict(), "squeezenet_cifar10.pth")
 
 print("Training Finished. Model saved to squeezenet_cifar10.pth")

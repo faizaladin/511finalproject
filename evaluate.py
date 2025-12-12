@@ -3,17 +3,15 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from model import SqueezeNet
-
-# For precision, recall, f1-score
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-# --- CONFIGURATION ---
+# Config
 BATCH_SIZE = 256
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_PATH = "squeezenet_qat_8bit.pth"
-MODEL_PATH = "squeezenet_cifar10.pth"  # --- IGNORE ---
+MODEL_PATH = "squeezenet_cifar10.pth" 
 
-# --- DATA PREPARATION ---
+# Image Resizing
 stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 test_transform = transforms.Compose([
     transforms.Resize(224),
@@ -21,15 +19,16 @@ test_transform = transforms.Compose([
     transforms.Normalize(*stats)
 ])
 
+# Data Loader
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
 testloader = DataLoader(testset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
 
-# --- MODEL LOADING ---
+# Model Init
 model = SqueezeNet(num_classes=10).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 
-# --- EVALUATION ---
+# Eval
 correct = 0
 total = 0
 all_labels = []
@@ -47,7 +46,7 @@ with torch.no_grad():
 accuracy = 100. * correct / total
 print(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
 
-# Calculate precision, recall, f1-score (macro average)
+# P, R, F1
 precision = precision_score(all_labels, all_preds, average='macro')
 recall = recall_score(all_labels, all_preds, average='macro')
 f1 = f1_score(all_labels, all_preds, average='macro')

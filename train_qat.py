@@ -6,19 +6,16 @@ import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
 import os
-
-# Ensure quantization_utils.py is in the same folder
 from model_qat import SqueezeNetQAT
 
-# --- CONFIGURATION ---
+# Config
 TASK1_CHECKPOINT = "squeezenet_cifar10.pth" 
 QAT_EPOCHS = 4         
-LR = 1e-5               # FIX 1: Very low learning rate to prevent explosion
-
+LR = 1e-5
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Running QAT on: {device}")
 
-# --- DATA ---
+# Image Resizing
 stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
 train_transform = transforms.Compose([
@@ -35,16 +32,15 @@ test_transform = transforms.Compose([
     transforms.Normalize(*stats)
 ])
 
+# Data Loaders
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=train_transform)
 trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2)
 
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
 testloader = DataLoader(testset, batch_size=64, shuffle=False, num_workers=2)
 
-# --- MODEL SETUP ---
+# Model Init
 model = SqueezeNetQAT(num_classes=10).to(device)
-
-# --- STRICT LOADING ---
 print(f"Loading weights from {TASK1_CHECKPOINT}...")
 if not os.path.exists(TASK1_CHECKPOINT):
     raise FileNotFoundError(f"Could not find {TASK1_CHECKPOINT}. Please check the file name.")
@@ -60,7 +56,7 @@ except RuntimeError as e:
     print(e)
     exit(1)
 
-# --- PRE-TRAINING CHECK ---
+# Pre Train
 print("Running 'Epoch 0' verification...")
 model.eval()
 correct = 0
@@ -83,12 +79,11 @@ if initial_acc < 20.0:
 else:
     print("Model verified! Starting QAT fine-tuning...")
 
-# --- OPTIMIZER ---
-# FIX 2: Set weight_decay=0. We don't want to shrink weights that need to be large for quantization.
+# Train Config
 optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=0)
 criterion = nn.CrossEntropyLoss()
 
-# --- TRAINING LOOP ---
+# Train
 for epoch in range(QAT_EPOCHS):
     model.train()
     running_loss = 0.0
@@ -104,15 +99,14 @@ for epoch in range(QAT_EPOCHS):
         outputs = model(inputs) 
         loss = criterion(outputs, labels)
         
-        # FIX 3: Check for explosion before it breaks the model
+        # Gradient Explosion Check
         if torch.isnan(loss):
-            print("ERROR: Loss is NaN! Gradients exploded.")
+            print("ERROR: Loss is NaN")
             break
             
         loss.backward()
         
-        # FIX 4: Gradient Clipping (The Magic Fix)
-        # This limits the update size even if the error is huge (127 vs 953)
+        # Gradient Clipping
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
         optimizer.step()

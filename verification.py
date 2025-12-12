@@ -3,11 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from model_qat import SqueezeNetQAT, W_FRAC, A_FRAC
 
-# --- CONFIGURATION ---
+# Config
 CHECKPOINT = "squeezenet_qat_8bit.pth" 
 device = torch.device("cpu")
 
-# --- HELPER: QUANTIZATION LOGIC ---
 def quantize_tensor(x, total_bits=8, frac_bits=6):
     step = 2.0 ** (-frac_bits)
     min_val = -(2.0 ** (total_bits - 1 - frac_bits))
@@ -16,7 +15,7 @@ def quantize_tensor(x, total_bits=8, frac_bits=6):
     x_quantized = torch.round(x_clamped / step) * step
     return x_quantized
 
-# --- LOAD MODEL ---
+# Model Init
 print(f"Loading {CHECKPOINT}...")
 model = SqueezeNetQAT(num_classes=10).to(device)
 try:
@@ -33,7 +32,6 @@ print("\n" + "="*40)
 print("       VERIFICATION 1: WEIGHTS")
 print("="*40)
 
-# Grab weights from the very first layer
 raw_weight = model.features[0].weight.data
 print(f"Layer: features[0] (Conv1)")
 print(f"Configured W_FRAC: {W_FRAC} bits")
@@ -62,23 +60,17 @@ print("="*40)
 print(f"Configured A_FRAC: {A_FRAC} bits")
 print(f"Expected Step Size: 2^-{A_FRAC} = {2**(-A_FRAC)}")
 
-# --- FIX START ---
-# Hook to capture the INPUT to the next layer (Expand)
-# This effectively captures the OUTPUT of the Squeeze path (which includes Quantization)
+
 captured_act = []
 def pre_hook_fn(module, input):
-    # input is a tuple (x,). We want x.
     captured_act.append(input[0].detach())
 
-# Attach hook to expand1x1 instead of squeeze
-hook_handle = model.features[3].expand1x1.register_forward_pre_hook(pre_hook_fn)
-# --- FIX END ---
 
-# Run a dummy input
+hook_handle = model.features[3].expand1x1.register_forward_pre_hook(pre_hook_fn)
+
 dummy_input = torch.randn(1, 3, 224, 224).to(device)
 model(dummy_input)
 
-# Check the captured output
 act = captured_act[0]
 unique_act = torch.unique(act).numpy()
 sorted_act = np.sort(unique_act)
